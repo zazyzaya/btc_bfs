@@ -15,70 +15,96 @@ def parse_blockcypher(wallet):
         #ts.append(t)
         t = tx['block_height']
 
-        ns = 0
-        for s in tx['inputs']:
-            # Should always be len 1 but idk
-            src += s['addresses']
-            ns += len(s['addresses'])
-        
-        nd = 0 
-        for d in tx['outputs']:
-            nd += 1 
-            dst.append(d['addresses'][0])
-            weight.append(d['value'])
+        n_in = tx['vin_sz']
+        n_out = tx['vout_sz']
 
-        # Add edge from source to other dst nodes
-        # if needed 
-        while nd > ns: 
-            src.append(src[-1])
+        if n_in > n_out:
+            assert n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
+            d = tx['outputs'][0]['addresses'][0]
+
+            # Need to distribute fee across all inputs. 
+            # This is a bit rough, but its better than nothing
+            fee = tx['fees']
+            total_sent = tx['total'] + fee 
+            
+            for a in tx['inputs']:
+                src.append(a['addresses'][0])
+                dst.append(d)
+
+                # Estimate fee
+                w = a['output_value']
+                w = int(w - (w/total_sent)*fee)
+
+                weight.append(w)
+                ts.append(t)
+
+        elif n_out > n_in: 
+            assert n_in == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
+            s = tx['inputs'][0]['addresses'][0]
+
+            for a in tx['outputs']:
+                src.append(s)
+                dst.append(a['addresses'][0])
+                weight.append(a['value'])
+                ts.append(t)
+
+        else:
+            assert n_in == 1 and n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
+            src.append(tx['inputs'][0]['addresses'][0])
+            dst.append(tx['outputs'][0]['addresses'][0])
+            weight.append(tx['outputs'][0]['value'])
             ts.append(t)
-            ns += 1
-
-        if ns > nd: 
-            print("Huh? Found weird transaction:")
-            print(json.dumps(tx,indent=1))
-            exit()
 
     return [src,dst], weight, ts
 
 
 def parse_btc_com(wallet):
-    resp = r.get(
-        f'https://chain.api.btc.com/v3/address/{wallet}/tx'
-    ).json() 
+    resp = r.get(f'https://chain.api.btc.com/v3/address/{wallet}/tx').json() 
     resp = resp['data']
 
     src,dst,weight,ts = [],[],[],[]
     for tx in resp['list']:
         t = tx['block_height']
 
-        ns = 0
-        for s in tx['inputs']:
-            src += s['prev_addresses']
-            ns += len(s['prev_addresses'])
+        n_in = tx['inputs_count']
+        n_out = tx['outputs_count']
 
-        nd = 0 
-        for d in tx['outputs']:
-            dst.append(d['addresses'][0])
-            weight.append(d['value'])
-            nd += 1 
+        if n_in > n_out:
+            assert n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
+            d = tx['outputs'][0]['addresses'][0]
+            
+            # Need to distribute fee across all inputs. 
+            # This is a bit rough, but its better than nothing
+            fee = tx['fee']
+            total_sent = tx['inputs_value']
 
-        # Add edge from source to other dst nodes
-        # if needed 
-        while nd > ns: 
-            src.append(src[-1])
+            for a in tx['inputs']:
+                src.append(a['prev_addresses'][0])
+                dst.append(d)
+
+                # Estimate fee
+                w = a['prev_value']
+                w = int(w - (w/total_sent)*fee)
+
+                weight.append(w) 
+                ts.append(t)
+
+        elif n_out > n_in: 
+            assert n_in == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
+            s = tx['inputs'][0]['prev_addresses'][0]
+
+            for a in tx['outputs']:
+                src.append(s)
+                dst.append(a['addresses'][0])
+                weight.append(a['value'])
+                ts.append(t)
+
+        else:
+            assert n_in == 1 and n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
+            src.append(tx['inputs'][0]['prev_addresses'][0])
+            dst.append(tx['outputs'][0]['addresses'][0])
+            weight.append(tx['outputs'][0]['value'])
             ts.append(t)
-            ns += 1
-
-        # TODO this isn't right. Need ability to 
-        # track several incoming payments to 
-        # a single node: 
-        # ns > nd implies weights come from src transactions
-        # nd >= ns implies weights come from dst transaction
-        if ns > nd: 
-            print("Huh? Found weird transaction:")
-            print(json.dumps(tx,indent=1))
-            exit()
 
     return [src,dst], weight, ts
 
@@ -90,9 +116,7 @@ AVAILABLE = [parse_blockcypher, parse_btc_com]
 # Debugging
 if __name__ == '__main__':
     wallets = [
-        '38Jc5gsauXPrFzA85EMUR88KG8qyVPcK52',
         '1122NYbAT2KkZDZ5TFvGy4D2Ut7eYfx4en'
     ]
 
-    for i,parser in enumerate(AVAILABLE):
-        print(parser(wallets[i]))
+    print(parse_blockcypher(wallets[0]))
