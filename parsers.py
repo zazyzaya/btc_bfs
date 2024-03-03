@@ -11,49 +11,28 @@ def parse_blockcypher(wallet):
     for tx in resp['txs']:
         # Would prefer to use timestamps, but not all 
         # APIs provide this info. 
-        #t = dt_parse(tx['recieved']).timestamp()
-        #ts.append(t)
         t = tx['block_height']
 
         n_in = tx['vin_sz']
         n_out = tx['vout_sz']
+        in_tot = tx['total'] + tx['fees']
 
-        if n_in > n_out:
-            assert n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
-            d = tx['outputs'][0]['addresses'][0]
+        in_addrs, in_weights = [],[]
+        for inpt in tx['inputs']:
+            in_addrs.append(inpt['addresses'][0])
+            in_weights.append(inpt['output_value'])
 
-            # Need to distribute fee across all inputs. 
-            # This is a bit rough, but its better than nothing
-            fee = tx['fees']
-            total_sent = tx['total'] + fee 
-            
-            for a in tx['inputs']:
-                src.append(a['addresses'][0])
-                dst.append(d)
+        out_addrs, out_vals = [],[]
+        for outpt in tx['outputs']:
+            out_addrs.append(outpt['addresses'][0])
+            out_vals.append(outpt['value'] / in_tot)
 
-                # Estimate fee
-                w = a['output_value']
-                w = int(w - (w/total_sent)*fee)
-
-                weight.append(w)
+        for i in range(n_in):
+            for j in range(n_out):
+                src.append(in_addrs[i])
+                dst.append(out_addrs[j])
                 ts.append(t)
-
-        elif n_out > n_in: 
-            assert n_in == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
-            s = tx['inputs'][0]['addresses'][0]
-
-            for a in tx['outputs']:
-                src.append(s)
-                dst.append(a['addresses'][0])
-                weight.append(a['value'])
-                ts.append(t)
-
-        else:
-            assert n_in == 1 and n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
-            src.append(tx['inputs'][0]['addresses'][0])
-            dst.append(tx['outputs'][0]['addresses'][0])
-            weight.append(tx['outputs'][0]['value'])
-            ts.append(t)
+                weight.append(int(in_weights[i] * out_vals[j]))
 
     return [src,dst], weight, ts
 
@@ -68,50 +47,31 @@ def parse_btc_com(wallet):
 
         n_in = tx['inputs_count']
         n_out = tx['outputs_count']
+        in_tot = tx['inputs_value']
 
-        if n_in > n_out:
-            assert n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
-            d = tx['outputs'][0]['addresses'][0]
-            
-            # Need to distribute fee across all inputs. 
-            # This is a bit rough, but its better than nothing
-            fee = tx['fee']
-            total_sent = tx['inputs_value']
+        in_addrs, in_weights = [],[]
+        for inpt in tx['inputs']:
+            in_addrs.append(inpt['prev_addresses'][0])
+            in_weights.append(inpt['prev_value'])
 
-            for a in tx['inputs']:
-                src.append(a['prev_addresses'][0])
-                dst.append(d)
+        out_addrs, out_vals = [],[]
+        for outpt in tx['outputs']:
+            out_addrs.append(outpt['addresses'][0])
+            out_vals.append(outpt['value'] / in_tot)
 
-                # Estimate fee
-                w = a['prev_value']
-                w = int(w - (w/total_sent)*fee)
-
-                weight.append(w) 
+        for i in range(n_in):
+            for j in range(n_out):
+                src.append(in_addrs[i])
+                dst.append(out_addrs[j])
                 ts.append(t)
-
-        elif n_out > n_in: 
-            assert n_in == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
-            s = tx['inputs'][0]['prev_addresses'][0]
-
-            for a in tx['outputs']:
-                src.append(s)
-                dst.append(a['addresses'][0])
-                weight.append(a['value'])
-                ts.append(t)
-
-        else:
-            assert n_in == 1 and n_out == 1, f'Found weird tx:\n{json.dumps(tx,indent=1)}'
-            src.append(tx['inputs'][0]['prev_addresses'][0])
-            dst.append(tx['outputs'][0]['addresses'][0])
-            weight.append(tx['outputs'][0]['value'])
-            ts.append(t)
+                weight.append(int(in_weights[i] * out_vals[j]))
 
     return [src,dst], weight, ts
 
 
 # Will keep increasing this, so when parallelized, can give
 # to threadpool to use whichever API isn't busy 
-AVAILABLE = [parse_blockcypher, parse_btc_com]
+AVAILABLE = [parse_btc_com] # , parse_blockcypher] #< Rate limited
 
 # Debugging
 if __name__ == '__main__':
