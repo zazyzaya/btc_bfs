@@ -2,3 +2,4 @@ iters
 secrets.py
 *.pkl
 __pycache__
+subgraph.csv
