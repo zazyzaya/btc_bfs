@@ -112,7 +112,6 @@ def build_wallet_map_database_job(f):
 
     # Database connector goes here:
     '''
-    # Pseudocode: 
     setup.psql: 
         create database btc; 
         \connect btc
@@ -123,21 +122,18 @@ def build_wallet_map_database_job(f):
             value bigint,
             PRIMARY KEY (tx_id)
         );
-
-
-    # Python part
-    # MAKE SURE THIS IS THREAD-SAFE
-    # Use a Lock() if necessary 
-
-    cur = Cursor('btc', write=True)
-    query = 'INSERT INTO tx (tx_id, wallet, value)\n'
-
-    for k,(w,v) in db.items():
-        query += f'({k},{w},{v}), '
-
-    query += ';' 
-    cur.execute(query)
     '''
+
+    # Build query to put new info into the database
+    query = 'INSERT INTO tx (tx_id, wallet, value)\n'
+    for tx,(w,v) in db.items():
+        query += f'({tx},{w},{v}), '
+    query += ';' 
+
+    
+    # Then, run that query (check that this is thread safe)
+    # cursor.execute(query)
+    
 
 def build_wallet_map_database():
     '''
