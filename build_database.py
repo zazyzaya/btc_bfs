@@ -1,9 +1,10 @@
-from globals import BLOCK_DIR, BLOCK_IDX, IGNORE
-import pickle 
-import time 
+from globals import BLOCK_DIR, BLOCK_IDX, IGNORE, NEWEST
 
+from joblib import Parallel, delayed
 from blockchain_parser.blockchain import Blockchain
 from tqdm import tqdm 
+
+JOBS = 32
 
 def get_block_height():
     with open(BLOCK_IDX, 'r') as f:
@@ -12,21 +13,12 @@ def get_block_height():
             f.read().split('\n')[:-1]
         ]
 
-def build_output_to_wallet_job(fnum):
+def build_wallet_map_from_file(fnum):
     '''
-    Runs per file. Can be parallelized.
-    TODO Should probably use a real database for this
-    Neo4j would be ideal. Make tx's relations e.g. 
-
-    Use transaction_hash : transaction_index for uuid keys
-
-    MERGE
-        (tx:TX {value: tx.hash}) 
-            -[:OWNED_BY]-> 
-        (wallet:WALLET {value: tx.address})
+    Runs per file. Should be parallelized and results
+    put into database of some sort. 
     '''
-    addr_db = dict() 
-    value_db = dict()
+    db = dict()
     bc = Blockchain(f'{BLOCK_DIR}/blk{str(fnum).zfill(5)}.dat')
 
     for block in bc.get_unordered_blocks():
@@ -36,15 +28,13 @@ def build_output_to_wallet_job(fnum):
                     continue 
 
                 key = f'{tx.txid}:{i}'
-                val = out.addresses[0].address
+                addr = out.addresses[0].address
+                db[key] = (addr, out.value)
 
-                addr_db[key] = val 
-                value_db[key] = out.value
+    return db
 
-    return addr_db, value_db
-
-def build_graph(fnum, addr_db, value_db):
-    db = dict() 
+def build_graph(fnum):
+    db = dict() # TODO db should be connector to wallet_map db 
     bc = Blockchain(f'{BLOCK_DIR}/blk{str(fnum).zfill(5)}.dat')
 
     bh = get_block_height()
@@ -117,43 +107,46 @@ def build_graph(fnum, addr_db, value_db):
 
     return edges
 
-def test_output_mapper():
-    st = time.time()
-    db,_ = build_output_to_wallet_job(10)
-    uq = set(list(db.values()))
-    print(f'{len(db)-len(uq)}/{len(db)} addresses seen only once')
-    print(f"Runtime: {time.time()-st}s")
+def build_wallet_map_database_job(f):
+    db = build_wallet_map_from_file(f)
 
+    # Database connector goes here:
     '''
-    Output: 
+    # Pseudocode: 
+    setup.psql: 
+        create database btc; 
+        \connect btc
 
-    434882/655745 addresses seen only once
-    Runtime: 21.117431640625s
+        create table if not exists tx (
+            tx_id text, 
+            wallet text, 
+            value bigint,
+            PRIMARY KEY (tx_id)
+        );
+
+
+    # Python part
+    # MAKE SURE THIS IS THREAD-SAFE
+    # Use a Lock() if necessary 
+
+    cur = Cursor('btc', write=True)
+    query = 'INSERT INTO tx (tx_id, wallet, value)\n'
+
+    for k,(w,v) in db.items():
+        query += f'({k},{w},{v}), '
+
+    query += ';' 
+    cur.execute(query)
     '''
 
-def test_build_graph(start_db,end_db):
+def build_wallet_map_database():
     '''
-    addrs, vals = dict(), dict()
-    
-    # Build small, in-memory database of first 3 files
-    for i in range(start_db,end_db):
-        a,v = build_output_to_wallet_job(i)
-        addrs = addrs | a 
-        vals = vals | v
-
-    # Save to disk so don't have to run above every time
-    with open('dbs.pkl', 'wb+') as f:
-        pickle.dump((addrs,vals), f)
+    Spins up JOBS=32 processes that each parse one block file,
+    and upload its contents to the database 
     '''
-    with open('dbs.pkl', 'rb') as f:
-        addrs,vals = pickle.load(f)
-        
-    # Try to build a graph of just the last file 
-    g = build_graph(end_db-1, addrs, vals)
-    
-    with open('subgraph.csv', 'w') as f:
-        for row in g:
-            f.write(','.join(row) + '\n')
+    Parallel(JOBS, prefer='processes')(
+        delayed(build_wallet_map_database_job)(i) for i in range(NEWEST)
+    )
 
 if __name__ == '__main__':
-    test_build_graph(0,3)
+    build_wallet_map_database()
